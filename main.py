@@ -1179,8 +1179,7 @@ class App(_AppBase):
     # ════════════════════════════════════════════════════════════════════════
 
     def _start_processing(self):
-        if not self._check_license_now():
-            return
+        # Validaciones locales primero (sin red)
         if not self.images:
             self._set_status("Selecciona imágenes primero.", error=True)
             return
@@ -1193,7 +1192,32 @@ class App(_AppBase):
                 "Escribe un nombre de carpeta o presiona «Buscar».", error=True)
             return
 
-        self.btn_process.configure(state="disabled")
+        # Verificar licencia en Firebase antes de procesar
+        def _on_valid():
+            self._do_start_processing(output)
+
+        def _on_invalid():
+            self.btn_process.configure(
+                state="normal",
+                text="✦  Procesar imágenes")
+            self._set_status("Licencia no activa.", error=True)
+
+        def _checking():
+            self.btn_process.configure(
+                state="disabled",
+                text="⏳  Verificando licencia…")
+            self._set_status("Verificando licencia con el servidor…")
+
+        self._check_license_async(
+            on_valid=_on_valid,
+            on_invalid=_on_invalid,
+            set_checking_ui=_checking)
+
+    def _do_start_processing(self, output: str):
+        """Arranca el hilo de procesamiento (ya validada la licencia)."""
+        self.btn_process.configure(
+            state="disabled",
+            text="✦  Procesar imágenes")
         self.btn_open.configure(state="disabled")
         self.progress.set(0)
         self._set_status(f"Guardando en:\n{output}")
@@ -1320,31 +1344,41 @@ class App(_AppBase):
         except Exception as e:
             mb.showerror("Error", str(e))
 
-    def _check_license_now(self) -> bool:
+    def _check_license_async(self, on_valid, on_invalid=None,
+                              set_checking_ui=None):
         """
-        Verifica si la licencia sigue vigente antes de ejecutar una función.
-        Usa la caché local (sin red) si está fresca; llama a Firebase si expiró.
-        Devuelve True si se puede continuar, False si se debe bloquear.
+        Verifica la licencia en Firebase en segundo plano (SIEMPRE consulta
+        la red, ignora caché) para detectar revocaciones en tiempo real.
+          · on_valid()   → se llama si la licencia sigue activa (o sin internet)
+          · on_invalid() → se llama si fue revocada o es inválida
+          · set_checking_ui() → se llama justo antes de lanzar el hilo
         """
-        try:
-            from license_manager import LicenseManager
-            lm     = LicenseManager()
-            result = lm.check()
-            if result.valid:
-                self._update_license_label()
-                return True
-            import tkinter.messagebox as mb
-            mb.showerror(
-                "Licencia requerida",
-                result.message or
-                "Tu licencia no está activa.\n"
-                "Contacta a tu distribuidor.")
-            self._update_license_label()
-            return False
-        except Exception as e:
-            import tkinter.messagebox as mb
-            mb.showerror("Error de licencia", str(e))
-            return False
+        if set_checking_ui:
+            set_checking_ui()
+
+        def _check():
+            try:
+                from license_manager import LicenseManager
+                lm      = LicenseManager()
+                revoked = lm.check_revoked()
+                self.after(0, self._update_license_label)
+                if revoked:
+                    def _show_error():
+                        import tkinter.messagebox as mb
+                        mb.showerror(
+                            "Licencia desactivada",
+                            "Tu licencia fue desactivada o no es válida.\n"
+                            "Contacta a tu distribuidor.")
+                        if on_invalid:
+                            on_invalid()
+                    self.after(0, _show_error)
+                else:
+                    self.after(0, on_valid)
+            except Exception:
+                # Error inesperado → no bloquear, dejar pasar
+                self.after(0, on_valid)
+
+        threading.Thread(target=_check, daemon=True).start()
 
     def _schedule_license_monitor(self):
         """Programa la próxima verificación de licencia (cada 5 minutos)."""
@@ -1380,9 +1414,15 @@ class App(_AppBase):
         self._on_close()
 
     def _open_facebook_window(self):
-        if not self._check_license_now():
-            return
-        FacebookWindow(self)
+        def _on_valid():
+            FacebookWindow(self)
+
+        def _on_invalid():
+            pass   # el error ya lo mostró _check_license_async
+
+        self._check_license_async(
+            on_valid=_on_valid,
+            on_invalid=_on_invalid)
 
     # ════════════════════════════════════════════════════════════════════════
     #  CONFIGURACIÓN PERSISTENTE
