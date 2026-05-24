@@ -93,20 +93,20 @@ class LicenseManager:
 
     # ── Flujo de validación ───────────────────────────────────────────────────
 
-    def check(self) -> LicenseResult:
+    def check(self, force_online: bool = False) -> LicenseResult:
         """
         Flujo completo al iniciar la app:
           1. Sin clave guardada → pedir licencia
-          2. Caché fresca → válido (sin llamada a red)
-          3. Caché expirada → validar contra Firebase
+          2. Caché fresca y force_online=False → válido (sin llamada a red)
+          3. Caché expirada o force_online=True → validar contra Firebase
           4. Sin internet pero caché reciente → periodo offline (GRACE_DAYS)
         """
         if not self._key:
             return LicenseResult(False,
                 "Ingresa tu clave de licencia para continuar.")
 
-        # Caché vigente
-        if self.is_cached_valid():
+        # Caché vigente (solo si no se fuerza validación online)
+        if not force_online and self.is_cached_valid():
             return LicenseResult(True, "", self._user_name)
 
         # Validar online

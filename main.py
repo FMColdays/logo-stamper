@@ -557,6 +557,8 @@ class App(_AppBase):
             ).grid(row=i, column=2, padx=(2, 0), pady=2)
 
     def _select_recent_logo(self, path: str):
+        if not self._require_license():
+            return
         if not os.path.exists(path):
             self._set_status(
                 f"El logo ya no existe: {os.path.basename(path)}", error=True)
@@ -877,6 +879,8 @@ class App(_AppBase):
     # ════════════════════════════════════════════════════════════════════════
 
     def _on_drop(self, event):
+        if not self._require_license():
+            return
         nuevos = [f for f in self._parse_drop(event.data)
                   if os.path.splitext(f)[1].lower() in IMAGE_EXTS]
         if nuevos:
@@ -895,6 +899,8 @@ class App(_AppBase):
     # ════════════════════════════════════════════════════════════════════════
 
     def _pick_images(self):
+        if not self._require_license():
+            return
         files = filedialog.askopenfilenames(
             title="Seleccionar imágenes",
             filetypes=[("Imágenes", "*.jpg *.jpeg *.png *.bmp *.webp *.tiff"),
@@ -908,6 +914,8 @@ class App(_AppBase):
             self._trigger_preview_soon()
 
     def _pick_images_folder(self):
+        if not self._require_license():
+            return
         folder = filedialog.askdirectory(title="Seleccionar carpeta con imágenes")
         if not folder:
             return
@@ -951,6 +959,8 @@ class App(_AppBase):
             self._canvas_bg_item = None
 
     def _pick_logo(self):
+        if not self._require_license():
+            return
         file = filedialog.askopenfilename(
             title="Seleccionar logo",
             filetypes=[("Imágenes", "*.png *.jpg *.jpeg"), ("Todos", "*.*")])
@@ -1351,6 +1361,24 @@ class App(_AppBase):
                     "Cierra la app y actívala con tu clave.")
         except Exception as e:
             mb.showerror("Error", str(e))
+
+    def _require_license(self) -> bool:
+        """
+        Verificación instantánea (caché local) para acciones de UI ligeras.
+        Usa el estado que ya validó Firebase al iniciar / cada 5 min.
+        """
+        try:
+            from license_manager import LicenseManager
+            if LicenseManager().is_cached_valid():
+                return True
+        except Exception:
+            pass
+        import tkinter.messagebox as mb
+        mb.showerror(
+            "Licencia requerida",
+            "No tienes una licencia activa.\n"
+            "Cierra la app, actívala con tu clave e inténtalo de nuevo.")
+        return False
 
     def _check_license_async(self, on_valid, on_invalid=None,
                               set_checking_ui=None):
@@ -1974,8 +2002,12 @@ class LicenseWindow(ctk.CTk):
 
 if __name__ == "__main__":
     from license_manager import LicenseManager
-    lm     = LicenseManager()
-    result = lm.check()
+    lm = LicenseManager()
+
+    # Siempre verificar contra Firebase al iniciar (ignora caché local).
+    # Esto garantiza que licencias borradas o desactivadas bloqueen de inmediato.
+    # Si no hay internet, usa el periodo de gracia (GRACE_DAYS).
+    result = lm.check(force_online=True)
 
     if not result.valid:
         # Mostrar ventana de activación
