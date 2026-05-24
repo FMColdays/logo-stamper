@@ -9,6 +9,14 @@ Requisito externo: Inno Setup 6  (gratis, ~3 MB)
 """
 import os, sys, shutil, subprocess, textwrap
 
+# Forzar UTF-8 en la consola de Windows para que los caracteres especiales funcionen
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # ── Configuración ─────────────────────────────────────────────────────────────
 APP_NAME     = "LogoStamper"
 APP_DISPLAY  = "Logo Stamper"

@@ -1694,6 +1694,117 @@ class FacebookWindow(ctk.CTkToplevel):
             text=f"✗  Error: {msg}", text_color="#ff6b6b")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  VENTANA DE LICENCIA
+# ══════════════════════════════════════════════════════════════════════════════
+
+class LicenseWindow(ctk.CTk):
+    """Ventana de activación de licencia — se muestra antes de abrir la app."""
+
+    def __init__(self, lm, initial_msg: str = ""):
+        super().__init__()
+        self._lm        = lm
+        self._activated = False
+
+        self.title("Logo Stamper — Activar licencia")
+        self.geometry("420x340")
+        self.resizable(False, False)
+        self.grid_columnconfigure(0, weight=1)
+
+        # ── Ícono de ventana ─────────────────────────────────────────────────
+        proj = os.path.dirname(os.path.abspath(__file__))
+        for name in ("app_icon.png", "app_icon.ico"):
+            p = os.path.join(proj, name)
+            if os.path.exists(p):
+                try:
+                    from PIL import Image
+                    img   = Image.open(p).resize((64, 64)).convert("RGBA")
+                    photo = ImageTk.PhotoImage(img)
+                    self.iconphoto(True, photo)
+                    self._icon = photo
+                except Exception:
+                    pass
+                break
+
+        # ── UI ───────────────────────────────────────────────────────────────
+        ctk.CTkLabel(self, text="Logo Stamper",
+                     font=ctk.CTkFont(size=26, weight="bold")).grid(
+            row=0, column=0, pady=(32, 4))
+
+        ctk.CTkLabel(self, text="🔑  Ingresa tu clave de licencia",
+                     text_color="gray").grid(row=1, column=0, pady=(0, 20))
+
+        self._entry = ctk.CTkEntry(
+            self, placeholder_text="LS-XXXX-XXXX-XXXX",
+            width=290, height=42, font=ctk.CTkFont(size=15),
+            justify="center")
+        existing = lm.get_key()
+        if existing:
+            self._entry.insert(0, existing)
+        self._entry.grid(row=2, column=0, pady=(0, 12))
+        self._entry.bind("<Return>", lambda e: self._activate())
+
+        self._btn = ctk.CTkButton(
+            self, text="Activar", width=180, height=42,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._activate)
+        self._btn.grid(row=3, column=0, pady=(0, 14))
+
+        color = "#ff6b6b" if initial_msg else "gray"
+        self._lbl = ctk.CTkLabel(
+            self, text=initial_msg, text_color=color,
+            wraplength=370, font=ctk.CTkFont(size=12))
+        self._lbl.grid(row=4, column=0, padx=20)
+
+        ctk.CTkLabel(
+            self,
+            text="¿No tienes licencia? Contacta a tu distribuidor.",
+            text_color="#444", font=ctk.CTkFont(size=10)).grid(
+            row=5, column=0, pady=(24, 0))
+
+    def _activate(self):
+        key = self._entry.get().strip()
+        if not key:
+            self._set_status("Ingresa tu clave de licencia.", error=True)
+            return
+        self._btn.configure(state="disabled", text="Validando…")
+        self._lbl.configure(text="Conectando con el servidor…",
+                            text_color="gray")
+        self.update()
+
+        def _check():
+            result = self._lm.validate_new_key(key)
+            self.after(0, lambda: self._on_result(result))
+        threading.Thread(target=_check, daemon=True).start()
+
+    def _on_result(self, result):
+        if result.valid:
+            self._activated = True
+            name = f"  —  {result.user_name}" if result.user_name else ""
+            self._set_status(f"✓ Licencia válida{name}", error=False)
+            self.after(900, self.destroy)
+        else:
+            self._btn.configure(state="normal", text="Activar")
+            self._set_status(result.message, error=True)
+
+    def _set_status(self, msg: str, error: bool = False):
+        self._lbl.configure(
+            text=msg,
+            text_color="#ff6b6b" if error else "#4CAF50")
+
+
 if __name__ == "__main__":
+    from license_manager import LicenseManager
+    lm     = LicenseManager()
+    result = lm.check()
+
+    if not result.valid:
+        # Mostrar ventana de activación
+        lw = LicenseWindow(lm, initial_msg=result.message if lm.get_key() else "")
+        lw.mainloop()
+        # Re-verificar después de que el usuario ingresó la clave
+        if not lm.is_cached_valid():
+            import sys; sys.exit(0)   # cerró sin activar
+
     app = App()
     app.mainloop()
