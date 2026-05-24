@@ -1197,21 +1197,28 @@ class App(_AppBase):
     # ════════════════════════════════════════════════════════════════════════
 
     def _start_processing(self):
-        # Validaciones locales primero (sin red)
+        # Validaciones locales (sin red, sin crear carpeta)
         if not self.images:
             self._set_status("Selecciona imágenes primero.", error=True)
             return
         if not self.logo_path:
             self._set_status("Selecciona un logo primero.", error=True)
             return
-        output = self._resolve_output()
-        if not output:
+        # Verificar que hay carpeta configurada SIN crearla todavía
+        if not self.entry_folder.get().strip() and not self.output_folder:
             self._set_status(
                 "Escribe un nombre de carpeta o presiona «Buscar».", error=True)
             return
 
-        # Verificar licencia en Firebase antes de procesar
+        # Verificar licencia en Firebase; la carpeta se crea solo si es válida
         def _on_valid():
+            output = self._resolve_output()   # ← crea la carpeta aquí
+            if not output:
+                self._set_status(
+                    "No se pudo determinar la carpeta de salida.", error=True)
+                self.btn_process.configure(
+                    state="normal", text="✦  Procesar imágenes")
+                return
             self._do_start_processing(output)
 
         def _on_invalid():
