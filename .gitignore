@@ -1,0 +1,36 @@
+# ── Salidas de compilación ───────────────────────────────────────────────────
+# app compilada por PyInstaller (cientos de MB)
+_dist_app/
+# instalador .exe generado
+_dist_installer/
+# archivos temporales de PyInstaller
+_build_tmp/
+
+# ── Archivos auto-generados ──────────────────────────────────────────────────
+# generado por PyInstaller al compilar
+*.spec
+# generado por _build_installer.py
+_installer_script.iss
+
+# ── Iconos generados ─────────────────────────────────────────────────────────
+# app_icon.ico se genera automáticamente desde app_icon.png al construir
+app_icon.ico
+
+# ── Configuración local del usuario ─────────────────────────────────────────
+# rutas de logos recientes, configuración personal
+config.json
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
