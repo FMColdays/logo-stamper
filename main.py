@@ -97,6 +97,10 @@ class App(_AppBase):
         self._set_window_icon(self.logo_path)   # ícono: logo guardado o app_icon.png
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Monitor de licencia: verifica en Firebase cada 5 minutos
+        self._license_monitor_id = None
+        self._schedule_license_monitor()
+
         self.bind("<Left>",  lambda e: self._kb_navigate(-1))
         self.bind("<Right>", lambda e: self._kb_navigate(+1))
 
@@ -1257,6 +1261,40 @@ class App(_AppBase):
         if self._last_output and os.path.exists(self._last_output):
             os.startfile(self._last_output)
 
+    # ════════════════════════════════════════════════════════════════════════
+    #  MONITOR DE LICENCIA EN TIEMPO REAL
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _schedule_license_monitor(self):
+        """Programa la próxima verificación de licencia (cada 5 minutos)."""
+        self._license_monitor_id = self.after(5 * 60 * 1000,
+                                              self._run_license_check)
+
+    def _run_license_check(self):
+        """Verifica en Firebase si la licencia sigue activa."""
+        def _check():
+            try:
+                from license_manager import LicenseManager
+                lm      = LicenseManager()
+                revoked = lm.check_revoked()
+                if revoked:
+                    self.after(0, self._on_license_revoked)
+                else:
+                    self.after(0, self._schedule_license_monitor)
+            except Exception:
+                # Cualquier error → no interrumpir, reintentar en 5 min
+                self.after(0, self._schedule_license_monitor)
+        threading.Thread(target=_check, daemon=True).start()
+
+    def _on_license_revoked(self):
+        """Cierra la app cuando la licencia es revocada en tiempo real."""
+        import tkinter.messagebox as mb
+        mb.showerror(
+            "Licencia desactivada",
+            "Tu licencia ha sido desactivada por el administrador.\n"
+            "La aplicación se cerrará.")
+        self._on_close()
+
     def _open_facebook_window(self):
         FacebookWindow(self)
 
@@ -1292,7 +1330,14 @@ class App(_AppBase):
             pass
 
     def _save_config(self):
-        cfg = {
+        # Leer config existente para no borrar campos de licencia u otros
+        cfg = {}
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            pass
+        cfg.update({
             "logo_path":     self.logo_path,
             "output_folder": self.output_folder,
             "suffix":        self.entry_suffix.get().strip(),
@@ -1300,7 +1345,7 @@ class App(_AppBase):
             "opacity":       int(self.slider_opacity.get()),
             "recent_logos":  self._recent_logos,
             "force_jpeg":    bool(self.switch_jpeg.get()),
-        }
+        })
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2, ensure_ascii=False)

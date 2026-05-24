@@ -149,6 +149,26 @@ class LicenseManager:
 
     # ── Llamada a Firebase ────────────────────────────────────────────────────
 
+    def check_revoked(self) -> bool:
+        """
+        Fuerza una validación en tiempo real contra Firebase (ignora caché).
+        Devuelve True si la licencia fue REVOCADA (active=false).
+        Devuelve False si sigue válida o si no hay internet (no interrumpe).
+        """
+        if not self._key:
+            return True
+        result = self._validate_online(self._key)
+        if result.offline:
+            return False   # Sin internet → no interrumpir
+        if not result.valid:
+            self._valid_until = 0.0
+            self._save()
+            return True    # Revocada
+        # Actualizar caché
+        self._valid_until = time.time() + CACHE_HOURS * 3600
+        self._save()
+        return False
+
     def _validate_online(self, key: str) -> LicenseResult:
         if not _REQUESTS_OK:
             return LicenseResult(False,
