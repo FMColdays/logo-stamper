@@ -19,6 +19,8 @@ app_icon.ico
 # ── Configuración local del usuario ─────────────────────────────────────────
 # rutas de logos recientes, configuración personal
 config.json
+# sesión de Facebook (token de acceso)
+fb_session.json
 
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/

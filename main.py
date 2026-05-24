@@ -235,7 +235,13 @@ class App(_AppBase):
             fg_color="transparent", border_width=1,
             state="disabled", command=self._open_output)
         self.btn_open.grid(
-            row=r, column=0, padx=12, pady=(2, 14), sticky="ew"); r += 1
+            row=r, column=0, padx=12, pady=(2, 4), sticky="ew"); r += 1
+
+        ctk.CTkButton(
+            left, text="📤  Subir a Facebook",
+            fg_color="transparent", border_width=1,
+            command=self._open_facebook_window).grid(
+            row=r, column=0, padx=12, pady=(0, 14), sticky="ew"); r += 1
 
         # ── Panel derecho ────────────────────────────────────────────────────
         right = ctk.CTkFrame(self)
@@ -1251,6 +1257,9 @@ class App(_AppBase):
         if self._last_output and os.path.exists(self._last_output):
             os.startfile(self._last_output)
 
+    def _open_facebook_window(self):
+        FacebookWindow(self)
+
     # ════════════════════════════════════════════════════════════════════════
     #  CONFIGURACIÓN PERSISTENTE
     # ════════════════════════════════════════════════════════════════════════
@@ -1314,6 +1323,358 @@ class App(_AppBase):
     def _set_status(self, msg: str, error: bool = False):
         self.lbl_status.configure(
             text=msg, text_color="#ff6b6b" if error else "gray")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  VENTANA DE SUBIDA A FACEBOOK
+# ══════════════════════════════════════════════════════════════════════════════
+
+class FacebookWindow(ctk.CTkToplevel):
+    """Ventana modal para subir imágenes a un álbum de Facebook."""
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Subir a Facebook")
+        self.geometry("490x640")
+        self.resizable(False, False)
+        self.grab_set()   # modal: bloquea la ventana principal
+
+        from facebook_uploader import FacebookAuth, FacebookUploader
+        self._auth     = FacebookAuth()
+        self._uploader = FacebookUploader(self._auth)
+        self._pages:  list[dict] = []
+        self._albums: list[dict] = []
+        self._stop_evt = threading.Event()
+        self._folder:  str | None = None
+
+        self._build()
+        self._refresh_login_ui()
+
+    # ── Construcción de la UI ─────────────────────────────────────────────────
+
+    def _build(self):
+        self.grid_columnconfigure(0, weight=1)
+        r = 0
+
+        # ── Sección: Cuenta ───────────────────────────────────────────────────
+        self._sec("Cuenta de Facebook", r); r += 1
+
+        self._lbl_user = ctk.CTkLabel(self, text="No has iniciado sesión",
+                                      text_color="gray")
+        self._lbl_user.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="w"); r += 1
+
+        login_row = ctk.CTkFrame(self, fg_color="transparent")
+        login_row.grid(row=r, column=0, padx=20, pady=(6, 0), sticky="ew")
+        login_row.grid_columnconfigure(0, weight=1); r += 1
+
+        self._btn_login = ctk.CTkButton(
+            login_row, text="🔵  Iniciar sesión con Facebook",
+            fg_color="#1877F2", hover_color="#166fe5",
+            command=self._do_login)
+        self._btn_login.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+        self._btn_logout = ctk.CTkButton(
+            login_row, text="Cerrar sesión", width=110,
+            fg_color="transparent", border_width=1,
+            command=self._do_logout)
+        self._btn_logout.grid(row=0, column=1)
+
+        # ── Sección: Destino ──────────────────────────────────────────────────
+        self._sec("Destino", r); r += 1
+
+        dest_row = ctk.CTkFrame(self, fg_color="transparent")
+        dest_row.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew")
+        dest_row.grid_columnconfigure(2, weight=1); r += 1
+
+        self._dest_var = ctk.StringVar(value="me")
+        ctk.CTkRadioButton(dest_row, text="Mi perfil",
+                           variable=self._dest_var, value="me",
+                           command=self._on_dest_change).grid(
+            row=0, column=0, padx=(0, 10))
+        ctk.CTkRadioButton(dest_row, text="Página:",
+                           variable=self._dest_var, value="page",
+                           command=self._on_dest_change).grid(
+            row=0, column=1)
+        self._page_menu = ctk.CTkOptionMenu(
+            dest_row, values=["(inicia sesión primero)"],
+            state="disabled", width=170,
+            command=lambda _: self._load_albums())
+        self._page_menu.grid(row=0, column=2, padx=(6, 0), sticky="ew")
+
+        # ── Sección: Álbum ────────────────────────────────────────────────────
+        self._sec("Álbum", r); r += 1
+
+        alb1 = ctk.CTkFrame(self, fg_color="transparent")
+        alb1.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew")
+        alb1.grid_columnconfigure(1, weight=1); r += 1
+
+        self._album_mode = ctk.StringVar(value="new")
+        ctk.CTkRadioButton(alb1, text="Crear nuevo:",
+                           variable=self._album_mode, value="new").grid(
+            row=0, column=0, padx=(0, 6))
+        self._entry_album = ctk.CTkEntry(
+            alb1, placeholder_text="Nombre del álbum")
+        self._entry_album.grid(row=0, column=1, sticky="ew")
+
+        alb2 = ctk.CTkFrame(self, fg_color="transparent")
+        alb2.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew")
+        alb2.grid_columnconfigure(1, weight=1); r += 1
+
+        ctk.CTkRadioButton(alb2, text="Existente:",
+                           variable=self._album_mode, value="existing").grid(
+            row=0, column=0, padx=(0, 6))
+        self._album_menu = ctk.CTkOptionMenu(
+            alb2, values=["(carga después de iniciar sesión)"],
+            state="disabled", command=lambda _: None)
+        self._album_menu.grid(row=0, column=1, sticky="ew")
+        ctk.CTkButton(alb2, text="↻", width=32,
+                      fg_color="transparent", border_width=1,
+                      command=self._load_albums).grid(
+            row=0, column=2, padx=(6, 0))
+
+        # ── Sección: Carpeta ──────────────────────────────────────────────────
+        self._sec("Carpeta de imágenes a subir", r); r += 1
+
+        frow = ctk.CTkFrame(self, fg_color="transparent")
+        frow.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew")
+        frow.grid_columnconfigure(0, weight=1); r += 1
+
+        self._entry_folder = ctk.CTkEntry(
+            frow, placeholder_text="Selecciona la carpeta con las imágenes…")
+        self._entry_folder.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ctk.CTkButton(frow, text="📁", width=36,
+                      command=self._pick_folder).grid(row=0, column=1)
+
+        self._lbl_folder_info = ctk.CTkLabel(
+            self, text="", text_color="gray", font=ctk.CTkFont(size=11))
+        self._lbl_folder_info.grid(
+            row=r, column=0, padx=20, pady=(2, 0), sticky="w"); r += 1
+
+        # ── Progreso ──────────────────────────────────────────────────────────
+        self._progress = ctk.CTkProgressBar(self)
+        self._progress.set(0)
+        self._progress.grid(row=r, column=0, padx=20, pady=(16, 4), sticky="ew"); r += 1
+
+        self._lbl_progress = ctk.CTkLabel(
+            self, text="", text_color="gray",
+            font=ctk.CTkFont(size=11), wraplength=440)
+        self._lbl_progress.grid(
+            row=r, column=0, padx=20, sticky="w"); r += 1
+
+        # ── Botón principal ───────────────────────────────────────────────────
+        self._btn_upload = ctk.CTkButton(
+            self, text="📤  Subir imágenes a Facebook",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=46, state="disabled",
+            command=self._start_upload)
+        self._btn_upload.grid(
+            row=r, column=0, padx=20, pady=(14, 20), sticky="ew"); r += 1
+
+    def _sec(self, text: str, row: int):
+        ctk.CTkLabel(self, text=text,
+                     font=ctk.CTkFont(size=13, weight="bold")).grid(
+            row=row, column=0, padx=20, pady=(14, 0), sticky="w")
+
+    # ── Estado de sesión ──────────────────────────────────────────────────────
+
+    def _refresh_login_ui(self):
+        if self._auth.is_logged_in():
+            name = self._auth.get_user_name() or "Usuario"
+            self._lbl_user.configure(
+                text=f"✓  Conectado como: {name}", text_color="#4CAF50")
+            self._btn_login.configure(state="disabled",
+                                      text="🔵  Iniciar sesión con Facebook")
+            self._btn_logout.configure(state="normal")
+            self._load_pages()
+        else:
+            self._lbl_user.configure(
+                text="No has iniciado sesión", text_color="gray")
+            self._btn_login.configure(state="normal")
+            self._btn_logout.configure(state="disabled")
+        self._check_ready()
+
+    # ── Login / logout ────────────────────────────────────────────────────────
+
+    def _do_login(self):
+        self._btn_login.configure(state="disabled", text="Abriendo navegador…")
+        self._lbl_user.configure(
+            text="Esperando autorización en el navegador (hasta 5 min)…",
+            text_color="#FF9800")
+
+        self._auth.login(
+            on_success=lambda tok, name: self.after(0, lambda: self._on_login_ok(name)),
+            on_error=lambda msg:         self.after(0, lambda: self._on_login_err(msg)),
+        )
+
+    def _on_login_ok(self, name: str):
+        self._refresh_login_ui()
+
+    def _on_login_err(self, msg: str):
+        self._lbl_user.configure(text=f"✗  {msg}", text_color="#ff6b6b")
+        self._btn_login.configure(state="normal",
+                                  text="🔵  Iniciar sesión con Facebook")
+
+    def _do_logout(self):
+        self._auth.logout()
+        self._pages  = []
+        self._albums = []
+        self._page_menu.configure(
+            values=["(inicia sesión primero)"], state="disabled")
+        self._album_menu.configure(
+            values=["(carga después de iniciar sesión)"], state="disabled")
+        self._refresh_login_ui()
+
+    # ── Páginas ───────────────────────────────────────────────────────────────
+
+    def _load_pages(self):
+        def _fetch():
+            try:
+                pages = self._uploader.get_pages()
+                self.after(0, lambda: self._on_pages_ready(pages))
+            except Exception as e:
+                self.after(0, lambda: self._lbl_progress.configure(
+                    text=f"No se pudieron cargar páginas: {e}",
+                    text_color="gray"))
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _on_pages_ready(self, pages: list[dict]):
+        self._pages = pages
+        if pages:
+            names = [p["name"] for p in pages]
+            self._page_menu.configure(values=names, state="normal")
+            self._page_menu.set(names[0])
+        else:
+            self._page_menu.configure(
+                values=["Sin páginas administradas"], state="disabled")
+        self._load_albums()
+
+    def _on_dest_change(self):
+        self._load_albums()
+
+    # ── Álbumes ───────────────────────────────────────────────────────────────
+
+    def _get_target_id(self) -> str:
+        if self._dest_var.get() == "page" and self._pages:
+            sel = self._page_menu.get()
+            for p in self._pages:
+                if p["name"] == sel:
+                    return p["id"]
+        return "me"
+
+    def _load_albums(self):
+        if not self._auth.is_logged_in():
+            return
+        tid = self._get_target_id()
+
+        def _fetch():
+            try:
+                albs = self._uploader.get_albums(tid)
+                self.after(0, lambda: self._on_albums_ready(albs))
+            except Exception as e:
+                self.after(0, lambda: self._lbl_progress.configure(
+                    text=f"No se pudieron cargar álbumes: {e}",
+                    text_color="gray"))
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _on_albums_ready(self, albs: list[dict]):
+        self._albums = albs
+        if albs:
+            names = [f"{a['name']}  ({a.get('count', '?')} fotos)" for a in albs]
+            self._album_menu.configure(values=names, state="normal")
+            self._album_menu.set(names[0])
+        else:
+            self._album_menu.configure(values=["Sin álbumes"], state="disabled")
+
+    # ── Carpeta ───────────────────────────────────────────────────────────────
+
+    def _pick_folder(self):
+        folder = filedialog.askdirectory(
+            title="Carpeta con imágenes ya procesadas")
+        if not folder:
+            return
+        self._folder = folder
+        self._entry_folder.delete(0, "end")
+        self._entry_folder.insert(0, folder)
+        exts  = {".jpg", ".jpeg", ".png", ".webp"}
+        count = sum(1 for f in os.listdir(folder)
+                    if os.path.splitext(f.lower())[1] in exts)
+        self._lbl_folder_info.configure(
+            text=f"→ {count} imagen(es) encontradas",
+            text_color="white" if count else "#ff6b6b")
+        self._check_ready()
+
+    def _check_ready(self):
+        ok = (self._auth.is_logged_in() and
+              bool(self._folder) and
+              os.path.isdir(self._folder or ""))
+        self._btn_upload.configure(state="normal" if ok else "disabled")
+
+    # ── Subida ────────────────────────────────────────────────────────────────
+
+    def _start_upload(self):
+        if not self._folder or not os.path.isdir(self._folder):
+            return
+
+        self._stop_evt.clear()
+        self._btn_upload.configure(state="disabled", text="Subiendo…")
+        self._progress.set(0)
+        self._lbl_progress.configure(text="Preparando…", text_color="gray")
+
+        tid  = self._get_target_id()
+        mode = self._album_mode.get()
+
+        def _run():
+            try:
+                # Obtener o crear álbum
+                if mode == "new":
+                    name = self._entry_album.get().strip() or "Logo Stamper"
+                    album_id = self._uploader.create_album(tid, name)
+                    self.after(0, lambda: self._lbl_progress.configure(
+                        text=f"✓ Álbum «{name}» creado",
+                        text_color="#4CAF50"))
+                else:
+                    sel      = self._album_menu.get()
+                    album_id = None
+                    for a in self._albums:
+                        if f"{a['name']}  ({a.get('count','?')} fotos)" == sel:
+                            album_id = a["id"]
+                            break
+                    if not album_id:
+                        raise RuntimeError("No se encontró el álbum seleccionado.")
+
+                def _cb(n, total, fname):
+                    self.after(0, lambda: self._on_progress(n, total, fname))
+
+                uploaded, total = self._uploader.upload_folder(
+                    album_id, self._folder,
+                    progress_cb=_cb, stop_evt=self._stop_evt)
+
+                self.after(0, lambda: self._on_done(uploaded, total))
+
+            except Exception as exc:
+                self.after(0, lambda: self._on_error(str(exc)))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_progress(self, n: int, total: int, fname: str):
+        if total > 0:
+            self._progress.set(n / total)
+        self._lbl_progress.configure(
+            text=f"{n}/{total}  ·  {fname}", text_color="gray")
+
+    def _on_done(self, uploaded: int, total: int):
+        self._progress.set(1)
+        self._btn_upload.configure(
+            state="normal", text="📤  Subir imágenes a Facebook")
+        self._lbl_progress.configure(
+            text=f"✓  {uploaded} de {total} fotos subidas con éxito. ¡Listo!",
+            text_color="#4CAF50")
+
+    def _on_error(self, msg: str):
+        self._btn_upload.configure(
+            state="normal", text="📤  Subir imágenes a Facebook")
+        self._lbl_progress.configure(
+            text=f"✗  Error: {msg}", text_color="#ff6b6b")
 
 
 if __name__ == "__main__":
