@@ -94,6 +94,7 @@ class App(_AppBase):
 
         self._build_ui()
         self._load_config()
+        self._update_license_label()            # muestra quién tiene licencia activa
         self._set_window_icon(self.logo_path)   # ícono: logo guardado o app_icon.png
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -245,7 +246,19 @@ class App(_AppBase):
             left, text="📤  Subir a Facebook",
             fg_color="transparent", border_width=1,
             command=self._open_facebook_window).grid(
-            row=r, column=0, padx=12, pady=(0, 14), sticky="ew"); r += 1
+            row=r, column=0, padx=12, pady=(0, 6), sticky="ew"); r += 1
+
+        # ── Info de licencia activa ──────────────────────────────────────────
+        ctk.CTkFrame(left, height=1, fg_color="#2a2a2a").grid(
+            row=r, column=0, padx=8, pady=(4, 0), sticky="ew"); r += 1
+
+        self._lbl_license = ctk.CTkLabel(
+            left, text="🔑 Verificando licencia…",
+            text_color="gray", font=ctk.CTkFont(size=10),
+            anchor="w", cursor="hand2")
+        self._lbl_license.grid(
+            row=r, column=0, padx=12, pady=(4, 12), sticky="ew"); r += 1
+        self._lbl_license.bind("<Button-1>", lambda e: self._show_license_info())
 
         # ── Panel derecho ────────────────────────────────────────────────────
         right = ctk.CTkFrame(self)
@@ -1166,6 +1179,8 @@ class App(_AppBase):
     # ════════════════════════════════════════════════════════════════════════
 
     def _start_processing(self):
+        if not self._check_license_now():
+            return
         if not self.images:
             self._set_status("Selecciona imágenes primero.", error=True)
             return
@@ -1265,6 +1280,72 @@ class App(_AppBase):
     #  MONITOR DE LICENCIA EN TIEMPO REAL
     # ════════════════════════════════════════════════════════════════════════
 
+    def _update_license_label(self):
+        """Actualiza el badge de licencia en el sidebar."""
+        try:
+            from license_manager import LicenseManager
+            lm   = LicenseManager()
+            key  = lm.get_key() or ""
+            name = lm.get_user_name() or ""
+            if lm.is_cached_valid():
+                text  = f"🔑 {name}  ({key})" if name else f"🔑 {key}"
+                color = "#4CAF50"
+            else:
+                text  = "🔑 Sin licencia activa — haz clic aquí"
+                color = "#ff6b6b"
+        except Exception:
+            text  = "🔑 Error al leer licencia"
+            color = "#ff6b6b"
+        self._lbl_license.configure(text=text, text_color=color)
+
+    def _show_license_info(self):
+        """Muestra un diálogo con la información de la licencia activa."""
+        import tkinter.messagebox as mb
+        try:
+            from license_manager import LicenseManager
+            lm   = LicenseManager()
+            key  = lm.get_key() or "(ninguna)"
+            name = lm.get_user_name() or "(desconocido)"
+            if lm.is_cached_valid():
+                mb.showinfo(
+                    "Licencia activa",
+                    f"Usuario:  {name}\n"
+                    f"Clave:    {key}\n\n"
+                    "Para cambiar la clave cierra la app y vuelve a abrirla.")
+            else:
+                mb.showwarning(
+                    "Sin licencia activa",
+                    "No hay una licencia válida en este momento.\n"
+                    "Cierra la app y actívala con tu clave.")
+        except Exception as e:
+            mb.showerror("Error", str(e))
+
+    def _check_license_now(self) -> bool:
+        """
+        Verifica si la licencia sigue vigente antes de ejecutar una función.
+        Usa la caché local (sin red) si está fresca; llama a Firebase si expiró.
+        Devuelve True si se puede continuar, False si se debe bloquear.
+        """
+        try:
+            from license_manager import LicenseManager
+            lm     = LicenseManager()
+            result = lm.check()
+            if result.valid:
+                self._update_license_label()
+                return True
+            import tkinter.messagebox as mb
+            mb.showerror(
+                "Licencia requerida",
+                result.message or
+                "Tu licencia no está activa.\n"
+                "Contacta a tu distribuidor.")
+            self._update_license_label()
+            return False
+        except Exception as e:
+            import tkinter.messagebox as mb
+            mb.showerror("Error de licencia", str(e))
+            return False
+
     def _schedule_license_monitor(self):
         """Programa la próxima verificación de licencia (cada 5 minutos)."""
         self._license_monitor_id = self.after(5 * 60 * 1000,
@@ -1280,6 +1361,7 @@ class App(_AppBase):
                 if revoked:
                     self.after(0, self._on_license_revoked)
                 else:
+                    self.after(0, self._update_license_label)
                     self.after(0, self._schedule_license_monitor)
             except Exception:
                 # Cualquier error → no interrumpir, reintentar en 5 min
@@ -1289,6 +1371,8 @@ class App(_AppBase):
     def _on_license_revoked(self):
         """Cierra la app cuando la licencia es revocada en tiempo real."""
         import tkinter.messagebox as mb
+        self._lbl_license.configure(
+            text="🔑 Licencia desactivada", text_color="#ff6b6b")
         mb.showerror(
             "Licencia desactivada",
             "Tu licencia ha sido desactivada por el administrador.\n"
@@ -1296,6 +1380,8 @@ class App(_AppBase):
         self._on_close()
 
     def _open_facebook_window(self):
+        if not self._check_license_now():
+            return
         FacebookWindow(self)
 
     # ════════════════════════════════════════════════════════════════════════
