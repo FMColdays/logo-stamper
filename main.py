@@ -41,8 +41,16 @@ class App(_AppBase):
             self.TkdndVersion = TkinterDnD._require(self)
 
         self.title("Logo Stamper")
-        self.geometry("1030x740")
         self.minsize(820, 620)
+
+        # Centrar la ventana en la pantalla al arrancar
+        _w, _h = 1030, 740
+        self.update_idletasks()
+        _sw = self.winfo_screenwidth()
+        _sh = self.winfo_screenheight()
+        _x  = (_sw - _w) // 2
+        _y  = (_sh - _h) // 2
+        self.geometry(f"{_w}x{_h}+{_x}+{_y}")
 
         # ── Estado principal ─────────────────────────────────────────────────
         self.images: list[str]         = []
