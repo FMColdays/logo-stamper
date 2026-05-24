@@ -21,15 +21,15 @@ except ImportError:
     _REQUESTS_OK = False
 
 # ── Configuración ──────────────────────────────────────────────────────────────
-FB_APP_ID     = ""           # ← pega aquí tu App ID
+FB_APP_ID     = "1656902272182775"
 CALLBACK_PORT = 8765
 REDIRECT_URI  = f"http://localhost:{CALLBACK_PORT}/callback"
-SCOPE         = "user_photos,pages_manage_posts,pages_show_list"
+SCOPE         = "public_profile,pages_show_list,pages_manage_posts,pages_read_engagement"
 SESSION_FILE  = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "fb_session.json")
 
 # ── Página de éxito que recibe el token del URL fragment ─────────────────────
-_HTML = b"""<!DOCTYPE html>
+_HTML = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Logo Stamper</title>
 <style>
   body{font-family:Arial,sans-serif;text-align:center;
@@ -49,12 +49,12 @@ _HTML = b"""<!DOCTYPE html>
   if (tk) {
     fetch("/token?t=" + encodeURIComponent(tk));
   } else if (er) {
-    document.getElementById("h").textContent = "✗ Error de autorización";
+    document.getElementById("h").textContent = "&#10007; Error de autorizaci&#243;n";
     document.getElementById("h").style.color = "#ff4444";
-    document.getElementById("p").textContent = decodeURIComponent(er.replace(/\+/g," "));
+    document.getElementById("p").textContent = decodeURIComponent(er.replace(/\\+/g," "));
   }
 </script>
-</body></html>"""
+</body></html>""".encode("utf-8")
 
 
 # ── Servidor OAuth local ───────────────────────────────────────────────────────
@@ -238,11 +238,11 @@ class FacebookUploader:
         if not self.auth.get_token():
             raise RuntimeError("Sesión de Facebook expirada. Inicia sesión de nuevo.")
 
-    def _get(self, path: str, **kw) -> dict:
+    def _get(self, path: str, token: str | None = None, **kw) -> dict:
         self._require()
         r = _req.get(
             f"{self.BASE}/{path}",
-            params={"access_token": self.auth.get_token(), **kw},
+            params={"access_token": token or self.auth.get_token(), **kw},
             timeout=30)
         r.raise_for_status()
         d = r.json()
@@ -250,9 +250,10 @@ class FacebookUploader:
             raise RuntimeError(d["error"].get("message", str(d["error"])))
         return d
 
-    def _post(self, path: str, data: dict | None = None, files=None) -> dict:
+    def _post(self, path: str, data: dict | None = None,
+              files=None, token: str | None = None) -> dict:
         self._require()
-        d = {"access_token": self.auth.get_token(), **(data or {})}
+        d = {"access_token": token or self.auth.get_token(), **(data or {})}
         r = _req.post(f"{self.BASE}/{path}", data=d, files=files, timeout=120)
         r.raise_for_status()
         rd = r.json()
@@ -265,32 +266,38 @@ class FacebookUploader:
         return self._get("me", fields="id,name")
 
     def get_pages(self) -> list[dict]:
-        """Lista de páginas que administra el usuario."""
-        d = self._get("me/accounts", fields="id,name")
+        """Lista de páginas que administra el usuario (incluye page token)."""
+        d = self._get("me/accounts", fields="id,name,access_token")
         return d.get("data", [])
 
     # ── Álbumes ───────────────────────────────────────────────────────────────
-    def get_albums(self, target_id: str = "me") -> list[dict]:
-        d = self._get(f"{target_id}/albums", fields="id,name,count", limit=50)
+    def get_albums(self, target_id: str = "me",
+                   token: str | None = None) -> list[dict]:
+        d = self._get(f"{target_id}/albums", token=token,
+                      fields="id,name,count", limit=50)
         return d.get("data", [])
 
     def create_album(self, target_id: str, name: str,
-                     description: str = "") -> str:
+                     description: str = "",
+                     token: str | None = None) -> str:
         """Crea un álbum y devuelve su ID."""
         result = self._post(
             f"{target_id}/albums",
-            data={"name": name, "description": description})
+            data={"name": name, "description": description},
+            token=token)
         return result["id"]
 
     # ── Fotos ─────────────────────────────────────────────────────────────────
     def upload_photo(self, album_id: str, image_path: str,
-                     caption: str = "") -> str:
+                     caption: str = "",
+                     token: str | None = None) -> str:
         """Sube una foto y devuelve su ID."""
         with open(image_path, "rb") as f:
             result = self._post(
                 f"{album_id}/photos",
                 data={"caption": caption},
-                files={"source": (os.path.basename(image_path), f, "image/jpeg")})
+                files={"source": (os.path.basename(image_path), f, "image/jpeg")},
+                token=token)
         return result.get("id", "")
 
     def upload_folder(
@@ -299,6 +306,7 @@ class FacebookUploader:
         folder_path: str,
         progress_cb: Callable[[int, int, str], None] | None = None,
         stop_evt:    threading.Event | None = None,
+        token:       str | None = None,
     ) -> tuple[int, int]:
         """
         Sube todas las imágenes JPEG/PNG de una carpeta.
@@ -321,7 +329,8 @@ class FacebookUploader:
                 progress_cb(i, total, fname)
             try:
                 self.upload_photo(album_id,
-                                  os.path.join(folder_path, fname))
+                                  os.path.join(folder_path, fname),
+                                  token=token)
                 uploaded += 1
             except Exception as exc:
                 # Notificar el error pero continuar con el resto

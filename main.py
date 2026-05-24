@@ -1380,26 +1380,19 @@ class FacebookWindow(ctk.CTkToplevel):
         self._btn_logout.grid(row=0, column=1)
 
         # ── Sección: Destino ──────────────────────────────────────────────────
-        self._sec("Destino", r); r += 1
+        self._sec("Página de Facebook", r); r += 1
 
         dest_row = ctk.CTkFrame(self, fg_color="transparent")
         dest_row.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew")
-        dest_row.grid_columnconfigure(2, weight=1); r += 1
+        dest_row.grid_columnconfigure(1, weight=1); r += 1
 
-        self._dest_var = ctk.StringVar(value="me")
-        ctk.CTkRadioButton(dest_row, text="Mi perfil",
-                           variable=self._dest_var, value="me",
-                           command=self._on_dest_change).grid(
-            row=0, column=0, padx=(0, 10))
-        ctk.CTkRadioButton(dest_row, text="Página:",
-                           variable=self._dest_var, value="page",
-                           command=self._on_dest_change).grid(
-            row=0, column=1)
+        ctk.CTkLabel(dest_row, text="Página:").grid(
+            row=0, column=0, padx=(0, 8))
         self._page_menu = ctk.CTkOptionMenu(
             dest_row, values=["(inicia sesión primero)"],
-            state="disabled", width=170,
+            state="disabled",
             command=lambda _: self._load_albums())
-        self._page_menu.grid(row=0, column=2, padx=(6, 0), sticky="ew")
+        self._page_menu.grid(row=0, column=1, sticky="ew")
 
         # ── Sección: Álbum ────────────────────────────────────────────────────
         self._sec("Álbum", r); r += 1
@@ -1547,28 +1540,36 @@ class FacebookWindow(ctk.CTkToplevel):
             self._page_menu.configure(
                 values=["Sin páginas administradas"], state="disabled")
         self._load_albums()
-
-    def _on_dest_change(self):
-        self._load_albums()
+        self._check_ready()
 
     # ── Álbumes ───────────────────────────────────────────────────────────────
 
     def _get_target_id(self) -> str:
-        if self._dest_var.get() == "page" and self._pages:
+        if self._pages:
             sel = self._page_menu.get()
             for p in self._pages:
                 if p["name"] == sel:
                     return p["id"]
-        return "me"
+            return self._pages[0]["id"]
+        return ""
+
+    def _get_page_token(self) -> str | None:
+        if self._pages:
+            sel = self._page_menu.get()
+            for p in self._pages:
+                if p["name"] == sel:
+                    return p.get("access_token")
+        return None
 
     def _load_albums(self):
-        if not self._auth.is_logged_in():
+        if not self._auth.is_logged_in() or not self._pages:
             return
-        tid = self._get_target_id()
+        tid  = self._get_target_id()
+        ptok = self._get_page_token()
 
         def _fetch():
             try:
-                albs = self._uploader.get_albums(tid)
+                albs = self._uploader.get_albums(tid, token=ptok)
                 self.after(0, lambda: self._on_albums_ready(albs))
             except Exception as e:
                 self.after(0, lambda: self._lbl_progress.configure(
@@ -1605,6 +1606,7 @@ class FacebookWindow(ctk.CTkToplevel):
 
     def _check_ready(self):
         ok = (self._auth.is_logged_in() and
+              bool(self._pages) and
               bool(self._folder) and
               os.path.isdir(self._folder or ""))
         self._btn_upload.configure(state="normal" if ok else "disabled")
@@ -1621,6 +1623,7 @@ class FacebookWindow(ctk.CTkToplevel):
         self._lbl_progress.configure(text="Preparando…", text_color="gray")
 
         tid  = self._get_target_id()
+        ptok = self._get_page_token()
         mode = self._album_mode.get()
 
         def _run():
@@ -1628,7 +1631,7 @@ class FacebookWindow(ctk.CTkToplevel):
                 # Obtener o crear álbum
                 if mode == "new":
                     name = self._entry_album.get().strip() or "Logo Stamper"
-                    album_id = self._uploader.create_album(tid, name)
+                    album_id = self._uploader.create_album(tid, name, token=ptok)
                     self.after(0, lambda: self._lbl_progress.configure(
                         text=f"✓ Álbum «{name}» creado",
                         text_color="#4CAF50"))
@@ -1647,7 +1650,8 @@ class FacebookWindow(ctk.CTkToplevel):
 
                 uploaded, total = self._uploader.upload_folder(
                     album_id, self._folder,
-                    progress_cb=_cb, stop_evt=self._stop_evt)
+                    progress_cb=_cb, stop_evt=self._stop_evt,
+                    token=ptok)
 
                 self.after(0, lambda: self._on_done(uploaded, total))
 
