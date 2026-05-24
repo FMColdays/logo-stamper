@@ -557,17 +557,17 @@ class App(_AppBase):
             ).grid(row=i, column=2, padx=(2, 0), pady=2)
 
     def _select_recent_logo(self, path: str):
-        if not self._require_license():
-            return
-        if not os.path.exists(path):
-            self._set_status(
-                f"El logo ya no existe: {os.path.basename(path)}", error=True)
-            return
-        self.logo_path = path
-        self.lbl_logo.configure(text=os.path.basename(path), text_color="white")
-        self._add_recent_logo(path)
-        self._set_window_icon(path)
-        self._trigger_preview_soon()
+        def _on_valid():
+            if not os.path.exists(path):
+                self._set_status(
+                    f"El logo ya no existe: {os.path.basename(path)}", error=True)
+                return
+            self.logo_path = path
+            self.lbl_logo.configure(text=os.path.basename(path), text_color="white")
+            self._add_recent_logo(path)
+            self._set_window_icon(path)
+            self._trigger_preview_soon()
+        self._check_license_async(on_valid=_on_valid)
 
     def _remove_recent_logo(self, path: str):
         """Elimina un logo de la lista de recientes."""
@@ -879,16 +879,17 @@ class App(_AppBase):
     # ════════════════════════════════════════════════════════════════════════
 
     def _on_drop(self, event):
-        if not self._require_license():
-            return
-        nuevos = [f for f in self._parse_drop(event.data)
-                  if os.path.splitext(f)[1].lower() in IMAGE_EXTS]
-        if nuevos:
-            self.images.extend(nuevos)
-            self._preview_idx = 0
-            self._refresh_images_label()
-            self._start_thumb_generation()
-            self._trigger_preview_soon()
+        data = event.data          # capturar antes del hilo asíncrono
+        def _on_valid():
+            nuevos = [f for f in self._parse_drop(data)
+                      if os.path.splitext(f)[1].lower() in IMAGE_EXTS]
+            if nuevos:
+                self.images.extend(nuevos)
+                self._preview_idx = 0
+                self._refresh_images_label()
+                self._start_thumb_generation()
+                self._trigger_preview_soon()
+        self._check_license_async(on_valid=_on_valid)
 
     @staticmethod
     def _parse_drop(data: str) -> list[str]:
@@ -899,38 +900,38 @@ class App(_AppBase):
     # ════════════════════════════════════════════════════════════════════════
 
     def _pick_images(self):
-        if not self._require_license():
-            return
-        files = filedialog.askopenfilenames(
-            title="Seleccionar imágenes",
-            filetypes=[("Imágenes", "*.jpg *.jpeg *.png *.bmp *.webp *.tiff"),
-                       ("Todos", "*.*")])
-        if files:
-            self.images = list(files)
-            self._preview_idx = 0
-            self._logo_positions.clear()
-            self._refresh_images_label()
-            self._start_thumb_generation()
-            self._trigger_preview_soon()
+        def _on_valid():
+            files = filedialog.askopenfilenames(
+                title="Seleccionar imágenes",
+                filetypes=[("Imágenes", "*.jpg *.jpeg *.png *.bmp *.webp *.tiff"),
+                           ("Todos", "*.*")])
+            if files:
+                self.images = list(files)
+                self._preview_idx = 0
+                self._logo_positions.clear()
+                self._refresh_images_label()
+                self._start_thumb_generation()
+                self._trigger_preview_soon()
+        self._check_license_async(on_valid=_on_valid)
 
     def _pick_images_folder(self):
-        if not self._require_license():
-            return
-        folder = filedialog.askdirectory(title="Seleccionar carpeta con imágenes")
-        if not folder:
-            return
-        found = sorted(
-            os.path.join(folder, f) for f in os.listdir(folder)
-            if os.path.splitext(f)[1].lower() in IMAGE_EXTS)
-        if found:
-            self.images = found
-            self._preview_idx = 0
-            self._logo_positions.clear()
-            self._refresh_images_label()
-            self._start_thumb_generation()
-            self._trigger_preview_soon()
-        else:
-            self._set_status("La carpeta no contiene imágenes compatibles.", error=True)
+        def _on_valid():
+            folder = filedialog.askdirectory(title="Seleccionar carpeta con imágenes")
+            if not folder:
+                return
+            found = sorted(
+                os.path.join(folder, f) for f in os.listdir(folder)
+                if os.path.splitext(f)[1].lower() in IMAGE_EXTS)
+            if found:
+                self.images = found
+                self._preview_idx = 0
+                self._logo_positions.clear()
+                self._refresh_images_label()
+                self._start_thumb_generation()
+                self._trigger_preview_soon()
+            else:
+                self._set_status("La carpeta no contiene imágenes compatibles.", error=True)
+        self._check_license_async(on_valid=_on_valid)
 
     def _clear_images(self):
         self.images = []
@@ -959,17 +960,17 @@ class App(_AppBase):
             self._canvas_bg_item = None
 
     def _pick_logo(self):
-        if not self._require_license():
-            return
-        file = filedialog.askopenfilename(
-            title="Seleccionar logo",
-            filetypes=[("Imágenes", "*.png *.jpg *.jpeg"), ("Todos", "*.*")])
-        if file:
-            self.logo_path = file
-            self.lbl_logo.configure(text=os.path.basename(file), text_color="white")
-            self._add_recent_logo(file)
-            self._set_window_icon(file)
-            self._trigger_preview_soon()
+        def _on_valid():
+            file = filedialog.askopenfilename(
+                title="Seleccionar logo",
+                filetypes=[("Imágenes", "*.png *.jpg *.jpeg"), ("Todos", "*.*")])
+            if file:
+                self.logo_path = file
+                self.lbl_logo.configure(text=os.path.basename(file), text_color="white")
+                self._add_recent_logo(file)
+                self._set_window_icon(file)
+                self._trigger_preview_soon()
+        self._check_license_async(on_valid=_on_valid)
 
     def _pick_folder(self):
         folder = filedialog.askdirectory(title="Seleccionar carpeta de salida")
@@ -1368,24 +1369,6 @@ class App(_AppBase):
                     "Cierra la app y actívala con tu clave.")
         except Exception as e:
             mb.showerror("Error", str(e))
-
-    def _require_license(self) -> bool:
-        """
-        Verificación instantánea (caché local) para acciones de UI ligeras.
-        Usa el estado que ya validó Firebase al iniciar / cada 5 min.
-        """
-        try:
-            from license_manager import LicenseManager
-            if LicenseManager().is_cached_valid():
-                return True
-        except Exception:
-            pass
-        import tkinter.messagebox as mb
-        mb.showerror(
-            "Licencia requerida",
-            "No tienes una licencia activa.\n"
-            "Cierra la app, actívala con tu clave e inténtalo de nuevo.")
-        return False
 
     def _check_license_async(self, on_valid, on_invalid=None,
                               set_checking_ui=None):
