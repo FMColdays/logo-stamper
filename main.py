@@ -1335,7 +1335,7 @@ class FacebookWindow(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
         self.title("Subir a Facebook")
-        self.geometry("490x640")
+        self.geometry("490x600")
         self.resizable(False, False)
         self.grab_set()   # modal: bloquea la ventana principal
 
@@ -1395,37 +1395,35 @@ class FacebookWindow(ctk.CTkToplevel):
         self._page_menu.grid(row=0, column=1, sticky="ew")
 
         # ── Sección: Álbum ────────────────────────────────────────────────────
-        self._sec("Álbum", r); r += 1
+        self._sec("Álbum de destino", r); r += 1
 
-        alb1 = ctk.CTkFrame(self, fg_color="transparent")
-        alb1.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew"); r += 1
+        alb_row = ctk.CTkFrame(self, fg_color="transparent")
+        alb_row.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew")
+        alb_row.grid_columnconfigure(0, weight=1); r += 1
 
-        self._album_mode = ctk.StringVar(value="page")
-        ctk.CTkRadioButton(alb1,
-                           text="Fotos de la página  (sección de fotos general)",
-                           variable=self._album_mode, value="page").grid(
-            row=0, column=0, sticky="w")
-
-        alb2 = ctk.CTkFrame(self, fg_color="transparent")
-        alb2.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew")
-        alb2.grid_columnconfigure(1, weight=1); r += 1
-
-        ctk.CTkRadioButton(alb2, text="Álbum existente:",
-                           variable=self._album_mode, value="existing").grid(
-            row=0, column=0, padx=(0, 6))
         self._album_menu = ctk.CTkOptionMenu(
-            alb2, values=["(carga después de iniciar sesión)"],
+            alb_row, values=["(carga después de iniciar sesión)"],
             state="disabled", command=lambda _: None)
-        self._album_menu.grid(row=0, column=1, sticky="ew")
-        ctk.CTkButton(alb2, text="↻", width=32,
+        self._album_menu.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(alb_row, text="↻", width=32,
                       fg_color="transparent", border_width=1,
                       command=self._load_albums).grid(
-            row=0, column=2, padx=(6, 0))
+            row=0, column=1, padx=(6, 0))
 
         ctk.CTkLabel(self,
-                     text="  Crea el álbum en Facebook y luego refresca  ↻",
-                     text_color="gray", font=ctk.CTkFont(size=10)).grid(
+                     text="  Selecciona un álbum o elige «Sin álbum» para subir "
+                          "las fotos sueltas a la página",
+                     text_color="gray", font=ctk.CTkFont(size=10),
+                     wraplength=440, justify="left").grid(
             row=r, column=0, padx=20, pady=(2, 0), sticky="w"); r += 1
+
+        ctk.CTkLabel(self, text="Título / descripción (opcional):",
+                     anchor="w").grid(
+            row=r, column=0, padx=20, pady=(10, 0), sticky="w"); r += 1
+        self._entry_caption = ctk.CTkEntry(
+            self, placeholder_text="Se añade como descripción a las fotos")
+        self._entry_caption.grid(
+            row=r, column=0, padx=20, pady=(2, 0), sticky="ew"); r += 1
 
         # ── Sección: Carpeta ──────────────────────────────────────────────────
         self._sec("Carpeta de imágenes a subir", r); r += 1
@@ -1583,12 +1581,10 @@ class FacebookWindow(ctk.CTkToplevel):
 
     def _on_albums_ready(self, albs: list[dict]):
         self._albums = albs
-        if albs:
-            names = [f"{a['name']}  ({a.get('count', '?')} fotos)" for a in albs]
-            self._album_menu.configure(values=names, state="normal")
-            self._album_menu.set(names[0])
-        else:
-            self._album_menu.configure(values=["Sin álbumes"], state="disabled")
+        album_names = [f"{a['name']}  ({a.get('count', '?')} fotos)" for a in albs]
+        names = ["— Sin álbum (fotos sueltas) —"] + album_names
+        self._album_menu.configure(values=names, state="normal")
+        self._album_menu.set(names[0])
 
     # ── Carpeta ───────────────────────────────────────────────────────────────
 
@@ -1638,15 +1634,24 @@ class FacebookWindow(ctk.CTkToplevel):
                 "Cierra sesión, inicia sesión de nuevo e inténtalo otra vez.")
             return
 
-        mode = self._album_mode.get()
+        sel     = self._album_menu.get()
+        caption = self._entry_caption.get().strip()
+
+        def _cb(n, total, fname):
+            self.after(0, lambda: self._on_progress(n, total, fname))
 
         def _run():
             try:
-                # Determinar destino de subida
-                if mode == "page":
-                    upload_target = tid   # sube directo a fotos de la página
-                else:                    # "existing"
-                    sel           = self._album_menu.get()
+                if sel.startswith("— Sin álbum"):
+                    # Un solo post con TODAS las fotos agrupadas (sin dividir en lotes)
+                    uploaded, total = self._uploader.upload_folder_as_post(
+                        tid, self._folder,
+                        caption=caption,
+                        progress_cb=_cb, stop_evt=self._stop_evt,
+                        token=ptok,
+                        batch_size=9999)
+                else:
+                    # Subir al álbum existente seleccionado
                     upload_target = None
                     for a in self._albums:
                         if f"{a['name']}  ({a.get('count','?')} fotos)" == sel:
@@ -1654,14 +1659,11 @@ class FacebookWindow(ctk.CTkToplevel):
                             break
                     if not upload_target:
                         raise RuntimeError("No se encontró el álbum seleccionado.")
-
-                def _cb(n, total, fname):
-                    self.after(0, lambda: self._on_progress(n, total, fname))
-
-                uploaded, total = self._uploader.upload_folder(
-                    upload_target, self._folder,
-                    progress_cb=_cb, stop_evt=self._stop_evt,
-                    token=ptok)
+                    uploaded, total = self._uploader.upload_folder(
+                        upload_target, self._folder,
+                        caption=caption,
+                        progress_cb=_cb, stop_evt=self._stop_evt,
+                        token=ptok)
 
                 self.after(0, lambda: self._on_done(uploaded, total))
 

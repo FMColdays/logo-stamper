@@ -332,6 +332,7 @@ class FacebookUploader:
         self,
         album_id:    str,
         folder_path: str,
+        caption:     str = "",
         progress_cb: Callable[[int, int, str], None] | None = None,
         stop_evt:    threading.Event | None = None,
         token:       str | None = None,
@@ -339,6 +340,7 @@ class FacebookUploader:
         """
         Sube todas las imágenes JPEG/PNG de una carpeta.
 
+        Si album_id es un page_id, las fotos se suben directamente a la página.
         progress_cb(n_ya_subidas, total, nombre_archivo_actual)
         Devuelve (subidas_exitosas, total_encontradas).
         """
@@ -358,6 +360,7 @@ class FacebookUploader:
             try:
                 self.upload_photo(album_id,
                                   os.path.join(folder_path, fname),
+                                  caption=caption,
                                   token=token)
                 uploaded += 1
             except Exception as exc:
@@ -369,3 +372,95 @@ class FacebookUploader:
             progress_cb(total, total, "")
 
         return uploaded, total
+
+    # ── Post multi-foto (alternativa a álbum vía API) ─────────────────────────
+    def upload_photo_unpublished(self, page_id: str, image_path: str,
+                                  token: str | None = None) -> str:
+        """Sube una foto sin publicar y devuelve su ID para adjuntarla a un post."""
+        with open(image_path, "rb") as f:
+            result = self._post(
+                f"{page_id}/photos",
+                data={"published": "false"},
+                files={"source": (os.path.basename(image_path), f, "image/jpeg")},
+                token=token)
+        return result.get("id", "")
+
+    def create_album_post(self, page_id: str, photo_ids: list[str],
+                           caption: str = "",
+                           token: str | None = None) -> str:
+        """Crea un post con múltiples fotos (hasta 30) en la página."""
+        import json as _json
+        attached = _json.dumps([{"media_fbid": pid} for pid in photo_ids])
+        result = self._post(
+            f"{page_id}/feed",
+            data={"message": caption, "attached_media": attached},
+            token=token)
+        return result.get("id", "")
+
+    def upload_folder_as_post(
+        self,
+        page_id:     str,
+        folder_path: str,
+        caption:     str = "",
+        progress_cb: Callable[[int, int, str], None] | None = None,
+        stop_evt:    threading.Event | None = None,
+        token:       str | None = None,
+        batch_size:  int = 10,
+    ) -> tuple[int, int]:
+        """
+        Sube todas las imágenes de una carpeta como post(s) multi-foto en la página.
+        Si hay más de batch_size fotos crea varios posts numerados.
+        Devuelve (subidas_exitosas, total_encontradas).
+        """
+        exts  = {".jpg", ".jpeg", ".png", ".webp"}
+        files = sorted(
+            f for f in os.listdir(folder_path)
+            if os.path.splitext(f.lower())[1] in exts)
+
+        total     = len(files)
+        photo_ids: list[str] = []
+
+        # ── Paso 1: subir cada foto sin publicar ──────────────────────────────
+        for i, fname in enumerate(files):
+            if stop_evt and stop_evt.is_set():
+                break
+            if progress_cb:
+                progress_cb(i, total, fname)
+            try:
+                pid = self.upload_photo_unpublished(
+                    page_id, os.path.join(folder_path, fname), token=token)
+                if pid:
+                    photo_ids.append(pid)
+            except Exception as exc:
+                if progress_cb:
+                    progress_cb(i, total, f"✗ {fname}: {exc}")
+
+        if not photo_ids:
+            if progress_cb:
+                progress_cb(total, total, "")
+            return 0, total
+
+        # ── Paso 2: publicar en lotes ─────────────────────────────────────────
+        batches   = [photo_ids[i:i + batch_size]
+                     for i in range(0, len(photo_ids), batch_size)]
+        n_batches = len(batches)
+
+        for bi, batch in enumerate(batches):
+            if stop_evt and stop_evt.is_set():
+                break
+            lote_txt = (f"  ({bi + 1}/{n_batches})" if n_batches > 1 else "")
+            if progress_cb:
+                progress_cb(total, total,
+                            f"Publicando lote {bi + 1}/{n_batches}…")
+            try:
+                self.create_album_post(
+                    page_id, batch, caption + lote_txt, token=token)
+            except Exception as exc:
+                if progress_cb:
+                    progress_cb(total, total,
+                                f"✗ Error al publicar lote {bi + 1}: {exc}")
+
+        if progress_cb:
+            progress_cb(total, total, "")
+
+        return len(photo_ids), total
