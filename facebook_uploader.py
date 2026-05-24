@@ -20,6 +20,22 @@ try:
 except ImportError:
     _REQUESTS_OK = False
 
+# ── Helper de errores ─────────────────────────────────────────────────────────
+def _fb_error_msg(err) -> str:
+    """Extrae un mensaje legible del campo 'error' de la Graph API."""
+    if not isinstance(err, dict):
+        return str(err) or "Error desconocido"
+    msg  = err.get("message")       # puede ser null
+    user = err.get("error_user_msg")
+    code = err.get("code", "?")
+    typ  = err.get("type", "Error")
+    if msg:
+        return msg
+    if user:
+        return user
+    return f"[{typ} #{code}]  {err}"
+
+
 # ── Configuración ──────────────────────────────────────────────────────────────
 FB_APP_ID     = "1656902272182775"
 CALLBACK_PORT = 8765
@@ -244,10 +260,14 @@ class FacebookUploader:
             f"{self.BASE}/{path}",
             params={"access_token": token or self.auth.get_token(), **kw},
             timeout=30)
-        r.raise_for_status()
-        d = r.json()
+        try:
+            d = r.json()
+        except ValueError:
+            r.raise_for_status()
+            return {}
         if "error" in d:
-            raise RuntimeError(d["error"].get("message", str(d["error"])))
+            raise RuntimeError(_fb_error_msg(d["error"]))
+        r.raise_for_status()
         return d
 
     def _post(self, path: str, data: dict | None = None,
@@ -255,10 +275,14 @@ class FacebookUploader:
         self._require()
         d = {"access_token": token or self.auth.get_token(), **(data or {})}
         r = _req.post(f"{self.BASE}/{path}", data=d, files=files, timeout=120)
-        r.raise_for_status()
-        rd = r.json()
+        try:
+            rd = r.json()
+        except ValueError:
+            r.raise_for_status()
+            return {}
         if "error" in rd:
-            raise RuntimeError(rd["error"].get("message", str(rd["error"])))
+            raise RuntimeError(_fb_error_msg(rd["error"]))
+        r.raise_for_status()
         return rd
 
     # ── Páginas / usuario ─────────────────────────────────────────────────────
@@ -285,7 +309,11 @@ class FacebookUploader:
             f"{target_id}/albums",
             data={"name": name, "description": description},
             token=token)
-        return result["id"]
+        album_id = result.get("id")
+        if not album_id:
+            raise RuntimeError(
+                f"No se pudo crear el álbum — respuesta inesperada: {result}")
+        return str(album_id)
 
     # ── Fotos ─────────────────────────────────────────────────────────────────
     def upload_photo(self, album_id: str, image_path: str,

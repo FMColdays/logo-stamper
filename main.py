@@ -1398,22 +1398,19 @@ class FacebookWindow(ctk.CTkToplevel):
         self._sec("Álbum", r); r += 1
 
         alb1 = ctk.CTkFrame(self, fg_color="transparent")
-        alb1.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew")
-        alb1.grid_columnconfigure(1, weight=1); r += 1
+        alb1.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew"); r += 1
 
-        self._album_mode = ctk.StringVar(value="new")
-        ctk.CTkRadioButton(alb1, text="Crear nuevo:",
-                           variable=self._album_mode, value="new").grid(
-            row=0, column=0, padx=(0, 6))
-        self._entry_album = ctk.CTkEntry(
-            alb1, placeholder_text="Nombre del álbum")
-        self._entry_album.grid(row=0, column=1, sticky="ew")
+        self._album_mode = ctk.StringVar(value="page")
+        ctk.CTkRadioButton(alb1,
+                           text="Fotos de la página  (sección de fotos general)",
+                           variable=self._album_mode, value="page").grid(
+            row=0, column=0, sticky="w")
 
         alb2 = ctk.CTkFrame(self, fg_color="transparent")
         alb2.grid(row=r, column=0, padx=20, pady=(4, 0), sticky="ew")
         alb2.grid_columnconfigure(1, weight=1); r += 1
 
-        ctk.CTkRadioButton(alb2, text="Existente:",
+        ctk.CTkRadioButton(alb2, text="Álbum existente:",
                            variable=self._album_mode, value="existing").grid(
             row=0, column=0, padx=(0, 6))
         self._album_menu = ctk.CTkOptionMenu(
@@ -1424,6 +1421,11 @@ class FacebookWindow(ctk.CTkToplevel):
                       fg_color="transparent", border_width=1,
                       command=self._load_albums).grid(
             row=0, column=2, padx=(6, 0))
+
+        ctk.CTkLabel(self,
+                     text="  Crea el álbum en Facebook y luego refresca  ↻",
+                     text_color="gray", font=ctk.CTkFont(size=10)).grid(
+            row=r, column=0, padx=20, pady=(2, 0), sticky="w"); r += 1
 
         # ── Sección: Carpeta ──────────────────────────────────────────────────
         self._sec("Carpeta de imágenes a subir", r); r += 1
@@ -1525,8 +1527,9 @@ class FacebookWindow(ctk.CTkToplevel):
                 pages = self._uploader.get_pages()
                 self.after(0, lambda: self._on_pages_ready(pages))
             except Exception as e:
+                msg = str(e)
                 self.after(0, lambda: self._lbl_progress.configure(
-                    text=f"No se pudieron cargar páginas: {e}",
+                    text=f"No se pudieron cargar páginas: {msg}",
                     text_color="gray"))
         threading.Thread(target=_fetch, daemon=True).start()
 
@@ -1572,8 +1575,9 @@ class FacebookWindow(ctk.CTkToplevel):
                 albs = self._uploader.get_albums(tid, token=ptok)
                 self.after(0, lambda: self._on_albums_ready(albs))
             except Exception as e:
+                msg = str(e)
                 self.after(0, lambda: self._lbl_progress.configure(
-                    text=f"No se pudieron cargar álbumes: {e}",
+                    text=f"No se pudieron cargar álbumes: {msg}",
                     text_color="gray"))
         threading.Thread(target=_fetch, daemon=True).start()
 
@@ -1624,39 +1628,46 @@ class FacebookWindow(ctk.CTkToplevel):
 
         tid  = self._get_target_id()
         ptok = self._get_page_token()
+
+        if not tid:
+            self._on_error("No hay ninguna página seleccionada.")
+            return
+        if not ptok:
+            self._on_error(
+                "No se pudo obtener el token de la página.\n"
+                "Cierra sesión, inicia sesión de nuevo e inténtalo otra vez.")
+            return
+
         mode = self._album_mode.get()
 
         def _run():
             try:
-                # Obtener o crear álbum
-                if mode == "new":
-                    name = self._entry_album.get().strip() or "Logo Stamper"
-                    album_id = self._uploader.create_album(tid, name, token=ptok)
-                    self.after(0, lambda: self._lbl_progress.configure(
-                        text=f"✓ Álbum «{name}» creado",
-                        text_color="#4CAF50"))
-                else:
-                    sel      = self._album_menu.get()
-                    album_id = None
+                # Determinar destino de subida
+                if mode == "page":
+                    upload_target = tid   # sube directo a fotos de la página
+                else:                    # "existing"
+                    sel           = self._album_menu.get()
+                    upload_target = None
                     for a in self._albums:
                         if f"{a['name']}  ({a.get('count','?')} fotos)" == sel:
-                            album_id = a["id"]
+                            upload_target = a["id"]
                             break
-                    if not album_id:
+                    if not upload_target:
                         raise RuntimeError("No se encontró el álbum seleccionado.")
 
                 def _cb(n, total, fname):
                     self.after(0, lambda: self._on_progress(n, total, fname))
 
                 uploaded, total = self._uploader.upload_folder(
-                    album_id, self._folder,
+                    upload_target, self._folder,
                     progress_cb=_cb, stop_evt=self._stop_evt,
                     token=ptok)
 
                 self.after(0, lambda: self._on_done(uploaded, total))
 
             except Exception as exc:
-                self.after(0, lambda: self._on_error(str(exc)))
+                msg = str(exc)
+                self.after(0, lambda: self._on_error(msg))
 
         threading.Thread(target=_run, daemon=True).start()
 
